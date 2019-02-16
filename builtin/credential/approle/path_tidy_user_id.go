@@ -115,6 +115,7 @@ func (b *backend) tidySecretID(ctx context.Context, req *logical.Request) (*logi
 
 				// ExpirationTime not being set indicates non-expiring SecretIDs
 				if !result.ExpirationTime.IsZero() && time.Now().After(result.ExpirationTime) {
+
 					logger.Trace("found expired secret ID")
 					// Clean up the accessor of the secret ID first
 					err = b.deleteSecretIDAccessorEntry(ctx, s, result.SecretIDAccessor, secretIDPrefixToUse)
@@ -175,6 +176,7 @@ func (b *backend) tidySecretID(ctx context.Context, req *logical.Request) (*logi
 					// lock we know we're not in a
 					// wrote-accessor-but-not-yet-secret case, which can be racy.
 					var entry secretIDAccessorStorageEntry
+					logger.Trace(fmt.Sprintf("dangling: accessorIDPrefixToUse: %s, accessorHash: %s", accessorIDPrefixToUse, accessorHash))
 					entryIndex := accessorIDPrefixToUse + accessorHash
 					se, err := s.Get(ctx, entryIndex)
 					if err != nil {
@@ -192,6 +194,7 @@ func (b *backend) tidySecretID(ctx context.Context, req *logical.Request) (*logi
 						var found bool
 					searchloop:
 						for _, roleNameHMAC := range roleNameHMACs {
+							logger.Trace(fmt.Sprintf("dangling: secretIDPrefixToUse: %s, roleNameHMAC: %s", secretIDPrefixToUse, roleNameHMAC))
 							secretIDHMACs, err := s.List(ctx, fmt.Sprintf("%s%s", secretIDPrefixToUse, roleNameHMAC))
 							if err != nil {
 								return err
