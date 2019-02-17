@@ -160,27 +160,27 @@ func (b *backend) tidySecretID(ctx context.Context, req *logical.Request) (*logi
 			// Accessor indexes were not getting cleaned up until 0.9.3. This is a fix
 			// to clean up the dangling accessor entries.
 			if len(accessorMap) > 0 {
-				logger.Trace(fmt.Sprintf("dangling: accesorMap length: %d", len(accessorMap)))
+				logger.Trace(fmt.Sprintf("dangling accessorMap length: %d", len(accessorMap)))
+				// Wait to get a lock for each of the secretIDs to make sure we avoid a race conditon
+				// where the accessor has been written but not yet the secret
 				for _, lock := range b.secretIDLocks {
 					lock.Lock()
-					defer lock.Unlock()
+					lock.Unlock()
 				}
-				for accessorHash, _ := range accessorMap {
-					logger.Trace("dangling accessor: %s", accessorHash)
+				// List all of the secretIDHMACs so that we can determine if the accessor is dangling or not
+				allSecretIDHMACs := make([]string, 0)
+				for _, roleNameHMAC := range roleNameHMACs {
+					secretIDHMACs, err := s.List(ctx, fmt.Sprintf("%s%s", secretIDPrefixToUse, roleNameHMAC))
+					if err != nil {
+						return err
+					}
+					for _, v := range secretIDHMACs {
+						allSecretIDHMACs = append(allSecretIDHMACs, v)
+					}
 				}
-				for accessorHash, _ := range accessorMap {
-					logger.Trace("found dangling accessor, verifying")
-					// Ideally, locking on accessors should be performed here too
-					// but for that, accessors are required in plaintext, which are
-					// not available. The code above helps but it may still be
-					// racy.
-					// ...
-					// Look up the secret again now that we have all the locks. The
-					// lock is held when writing accessor/secret so if we have the
-					// lock we know we're not in a
-					// wrote-accessor-but-not-yet-secret case, which can be racy.
+				for accessorHash := range accessorMap {
+					logger.Trace("found dangling accessor, verifying", accessorHash)
 					var entry secretIDAccessorStorageEntry
-					logger.Trace(fmt.Sprintf("dangling: accessorIDPrefixToUse: %s, accessorHash: %s", accessorIDPrefixToUse, accessorHash))
 					entryIndex := accessorIDPrefixToUse + accessorHash
 					se, err := s.Get(ctx, entryIndex)
 					if err != nil {
@@ -197,18 +197,11 @@ func (b *backend) tidySecretID(ctx context.Context, req *logical.Request) (*logi
 						// actually hit this very often
 						var found bool
 					searchloop:
-						for _, roleNameHMAC := range roleNameHMACs {
-							logger.Trace(fmt.Sprintf("dangling: secretIDPrefixToUse: %s, roleNameHMAC: %s", secretIDPrefixToUse, roleNameHMAC))
-							secretIDHMACs, err := s.List(ctx, fmt.Sprintf("%s%s", secretIDPrefixToUse, roleNameHMAC))
-							if err != nil {
-								return err
-							}
-							for _, v := range secretIDHMACs {
-								if v == entry.SecretIDHMAC {
-									found = true
-									logger.Trace("accessor verified, not removing")
-									break searchloop
-								}
+						for _, v := range allSecretIDHMACs {
+							if v == entry.SecretIDHMAC {
+								found = true
+								logger.Trace("accessor verified, not removing")
+								break searchloop
 							}
 						}
 						if !found {
